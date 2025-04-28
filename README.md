@@ -248,14 +248,6 @@ python cli_chat.py
 *   [ ] **脱离GAIA使用:** 如果工具和Agent完善之后刷GAIA分数高的话，考虑基于此制作一个客户端，探寻Agent系统有趣的实际应用。
 *   [ ] **添加可视化架构图:** 在 README 中加入更清晰的架构图。
 
-## 贡献
-
-欢迎贡献！如果您发现 Bug 或有改进建议，请提出 Issue 或 Pull Request。
-
-## 许可证
-
-本软件根据 Apache License, Version 2.0 ("许可证") 授权；除非符合许可证，否则您不得使用此文件。
-您可以在以下网址获取许可证副本：
 
 &nbsp;&nbsp;&nbsp;&nbsp; http://www.apache.org/licenses/LICENSE-2.0
 
