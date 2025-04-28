@@ -3,6 +3,8 @@ import os
 import json
 import zipfile
 import pandas as pd
+from pptx import Presentation
+
 try:
     # 尝试导入 pypdf，如果失败则尝试 PyPDF2
     import pypdf
@@ -161,6 +163,34 @@ def read_docx_file(file_path: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error reading DOCX file {file_path}: {e}")
         return {"status": "error", "message": f"Error reading DOCX file: {str(e)}"}
+
+def read_pptx_file(file_path: str) -> Dict[str, Any]:
+    """Reads text content from a PowerPoint (.pptx) file."""
+    logger.info(f"Attempting to read PPTX file: {file_path}")
+    try:
+        prs = Presentation(file_path)
+        content_list = []
+        for i, slide in enumerate(prs.slides):
+            slide_text = [f"--- Slide {i+1} ---"]
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    slide_text.append(shape.text.strip())
+            content_list.append("\n".join(filter(None, slide_text))) # 加入非空文本
+
+        content = "\n\n".join(content_list)
+        logger.info(f"Successfully extracted text from PPTX file: {file_path}")
+        max_len = 15000 # PPTX 可能内容较多
+        if len(content) > max_len:
+            logger.warning(f"PPTX content from {file_path} truncated to {max_len} characters.")
+            content = content[:max_len] + "\n... (truncated)"
+        return {"status": "success", "content": content}
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        return {"status": "error", "message": f"File not found: {file_path}"}
+    except Exception as e:
+        # 捕捉 python-pptx 可能抛出的特定异常会更好
+        logger.error(f"Error reading PPTX file {file_path}: {e}")
+        return {"status": "error", "message": f"Error reading PPTX file: {str(e)}"}
 
 def parse_pdb_file(file_path: str) -> Dict[str, Any]:
     """Parses a PDB file and returns a summary."""
@@ -345,3 +375,58 @@ def process_audio_with_gemini(file_path: str, prompt: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error processing audio {file_path} with Gemini: {e}")
         return {"status": "error", "message": f"Error processing audio with Gemini: {str(e)}"}
+
+def process_image_with_gemini(file_path: str, prompt: str) -> Dict[str, Any]:
+    """Processes an image file (e.g., PNG, JPEG) using the Gemini API."""
+    logger.info(f"Attempting to process image with Gemini: {file_path}")
+    if not GENAI_SDK_AVAILABLE:
+        return {"status": "error", "message": "GenAI SDK not available."}
+
+    # Determine MIME type
+    ext = os.path.splitext(file_path)[1].lower()
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".heic": "image/heic", ".heif": "image/heif",
+        # 添加更多支持的格式
+    }
+    mime_type = mime_map.get(ext)
+    if not mime_type:
+         logger.error(f"Unsupported image file extension: {ext} for file {file_path}")
+         return {"status": "error", "message": f"Unsupported image file type: {ext}"}
+
+    try:
+        client = genai.Client() # 创建客户端
+
+        with open(file_path, "rb") as f:
+            image_bytes = f.read()
+
+        image_part = genai_types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+        # 考虑从配置获取模型，确保模型支持图像输入
+        model_name = "gemini-1.5-flash" # 或者 gemini-1.5-pro / gemini-2.0-flash / gemini-2.5-flash/pro
+        # model_name = "gemini-2.0-flash" # <-- 如果你的默认模型支持图像
+
+        # 可选：检查模型能力
+        # try:
+        #     model_info = client.models.get(f"models/{model_name}")
+        #     if mime_type not in model_info.supported_content_mime_types:
+        #         logger.error(f"Model {model_name} does not support {mime_type} input.")
+        #         return {"status": "error", "message": f"Model {model_name} does not support {mime_type} input."}
+        # except Exception as model_err:
+        #     logger.warning(f"Could not verify model capabilities for {model_name}: {model_err}")
+
+
+        logger.info(f"Sending image and prompt to Gemini model: {model_name}")
+        response = client.models.generate_content(
+            model=f"models/{model_name}",
+            contents=[image_part, prompt] # 图像在前，提示在后通常效果更好
+        )
+
+        logger.info(f"Received response from Gemini for image: {file_path}")
+        return {"status": "success", "content": response.text}
+
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        return {"status": "error", "message": f"File not found: {file_path}"}
+    except Exception as e:
+        logger.error(f"Error processing image {file_path} with Gemini: {e}")
+        return {"status": "error", "message": f"Error processing image with Gemini: {str(e)}"}

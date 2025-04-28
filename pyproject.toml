@@ -16,7 +16,6 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]", # 用于运行 FastAPI 服务
     "python-dotenv",    # 用于加载 .env 文件
-    # --- GAIA 任务可能需要的库 (后续根据工具实现添加) ---
     "requests",         # 网页请求
     "beautifulsoup4",   # HTML 解析
     "lxml",             # HTML/XML 解析器 (bs4 需要)
@@ -26,32 +25,15 @@ dependencies = [
     "python-docx",      # DOCX 读取
     "Pillow",           # 图像处理 (基础)
     "google-genai>=1.0.0", # 明确使用新版 SDK
-    "pandas",
-    "openpyxl",
-    "pypdf",
-    "python-docx",
-    "Pillow",        # 用于 Gemini 处理图像（即使我们不直接用它打开）
     "Biopython",     # 用于处理 .pdb 文件
-    "requests",      # 用于从 URL 获取文件（如果需要）
     "httpx",         # GenAI SDK 可能依赖，或者直接用于下载
-    # "pytesseract",      # OCR (需要安装 Tesseract OCR 引擎)
-    # "SpeechRecognition",# 语音识别 (可能需要其他依赖如 pocketsphinx 或 API 客户端)
-    # "librosa",          # 音频分析 (如果需要更复杂的处理)
-    # "pydub",            # 音频文件格式转换/处理
-    # "numpy",            # 数值计算 (pandas 依赖, 统计计算)
-    # "pint",             # 单位转换
-    # "geopy",            # 地理编码/距离计算
-    # --- 第三方工具包装器 (如果需要) ---
-    # "langchain-community",
-    # "tavily-python",
-    # "crewai-tools",
-    # "google-generativeai", # ADK 已包含，但明确列出无害
-    # "litellm"             # 如果使用非 Gemini 模型
+    "python-pptx",
+    "tabulate"
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/your-repo/gaia-adk-agent" # 替换为你的仓库地址
-"Bug Tracker" = "https://github.com/your-repo/gaia-adk-agent/issues"
+"Homepage" = "https://github.com/yxygg/adk-gaia" # 替换为你的仓库地址
+"Bug Tracker" = "https://github.com/yxygg/adk-gaia/issues"
 
 [tool.uv]
 # 可选：uv 相关配置

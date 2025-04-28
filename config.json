@@ -7,5 +7,5 @@
   "api_port": 9012,
   "runner_strategy": "first_n",
   "runner_task_id": "",
-  "runner_first_n": 20
+  "runner_first_n": 100
 }

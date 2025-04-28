@@ -4,8 +4,10 @@ import os
 import time
 import requests
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import uuid
 
 # --- 从配置模块导入 ---
 try:
@@ -72,45 +74,68 @@ def load_gaia_data(metadata_file: str) -> List[Dict[str, Any]]:
         logger.exception(f"Error reading GAIA metadata file {metadata_file}: {e}")
         return []
 
-# --- 调用 Agent API ---
 def call_agent_api(task: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     """Calls the FastAPI endpoint for a single GAIA task."""
     task_id = task["task_id"]
     logger.info(f"Submitting task {task_id}...")
+
+    question = task["Question"]
+    file_name = task.get("file_name")
+    gaia_file_path = None
+
+    # --- 构造文件路径并添加到问题中 ---
+    if file_name and GAIA_SPLIT_DIR:
+        # 确保 GAIA_SPLIT_DIR 是绝对路径或相对于当前工作目录有效
+        abs_gaia_split_dir = os.path.abspath(GAIA_SPLIT_DIR)
+        potential_path = os.path.abspath(os.path.join(abs_gaia_split_dir, file_name))
+
+        # 基本安全检查：确保文件存在且在预期目录下
+        if os.path.commonpath([abs_gaia_split_dir]) == os.path.commonpath([abs_gaia_split_dir, potential_path]) and os.path.isfile(potential_path):
+            gaia_file_path = potential_path
+            # 将文件路径信息添加到问题文本中
+            question += f"\n\n[System Note: The relevant file for this task is located at the following absolute path: {gaia_file_path}]"
+            logger.info(f"Appended absolute file path to question for task {task_id}: {gaia_file_path}")
+        else:
+            logger.warning(f"File '{file_name}' not found within or is outside expected directory '{abs_gaia_split_dir}'. Potential path checked: {potential_path}. Sending question without file path info.")
+            # 如果文件无效，不添加路径信息，让 Agent 自行判断
+    elif file_name:
+         logger.warning(f"File name '{file_name}' provided for task {task_id}, but GAIA data directory is not configured correctly. Sending question without file path info.")
+
+
     request_payload = {
         "user_id": user_id,
         "task_id": task_id,
-        "question": task["Question"],
-        "file_name": task.get("file_name"),
-        # 为每个任务创建独立会话可能更清晰，避免状态污染
+        "question": question, # 使用修改后的 question
+        "file_name": file_name, # 仍然可以传递原始文件名，以备后用或记录
+        # Session ID - 为每个任务创建新会话以隔离状态
         "session_id": f"session_{task_id}_{uuid.uuid4()}"
+        # "state": {} # 不再通过 API 传递初始文件路径状态
     }
+
     result = {
         "task_id": task_id,
         "model_answer": None,
-        "reasoning_trace_summary": None, # 存储简化追踪或错误信息
+        "reasoning_trace_summary": None,
         "error": None,
         "api_response_status": None,
-        "ground_truth": task.get("Final Answer")
+        "ground_truth": task.get("Final Answer") # 使用 Final Answer 而不是 Final answer
     }
     start_time = time.time()
     try:
-        response = requests.post(CHAT_ENDPOINT, json=request_payload, timeout=600) # 超时增加到 10 分钟
+        response = requests.post(CHAT_ENDPOINT, json=request_payload, timeout=600) # 10分钟超时
         result["api_response_status"] = response.status_code
-        response.raise_for_status()
+        response.raise_for_status() # Raises HTTPError for bad responses (4xx or 5xx)
 
         response_data = response.json()
         result["model_answer"] = response_data.get("model_answer")
-        result["error"] = response_data.get("error") # API 返回的错误
+        result["error"] = response_data.get("error") # Get error from API response
 
-        # 存储部分追踪信息，例如错误或最后几个事件
+        # Log or store part of the trace if needed
         trace = response_data.get("reasoning_trace")
         if result["error"] and trace:
-             # 只记录包含错误的追踪部分
-             result["reasoning_trace_summary"] = [evt for evt in trace if evt.get("error")] or trace[-1:] # 最后一条
+            result["reasoning_trace_summary"] = [evt for evt in trace if evt.get("error")] or trace[-1:]
         # elif trace:
-        #     # 可以选择记录最后几条或特定类型的事件
-        #     result["reasoning_trace_summary"] = trace[-3:] # 例如最后3条
+        #     result["reasoning_trace_summary"] = trace[-3:] # Example: last 3 events
 
     except requests.exceptions.Timeout:
         logger.error(f"API request timed out for task {task_id}")
@@ -118,13 +143,17 @@ def call_agent_api(task: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     except requests.exceptions.RequestException as e:
         logger.error(f"API request failed for task {task_id}: {e}")
         result["error"] = f"API request failed: {str(e)}"
+        # 如果有响应，记录状态码
+        if hasattr(e, 'response') and e.response is not None:
+            result["api_response_status"] = e.response.status_code
+            logger.error(f"API response status code: {e.response.status_code}")
+            logger.error(f"API response text: {e.response.text[:500]}") # 记录部分响应体
     except json.JSONDecodeError as e:
-        # 检查响应状态码和内容
         response_text = response.text if 'response' in locals() else "N/A"
         logger.error(f"Failed to decode API JSON response for task {task_id}. Status: {result['api_response_status']}, Response text: {response_text[:200]}... Error: {e}")
         result["error"] = f"Failed to decode API response (status {result['api_response_status']})"
     except Exception as e:
-        logger.exception(f"Unexpected error processing task {task_id}: {e}") # 使用 logger.exception 包含 traceback
+        logger.exception(f"Unexpected error processing task {task_id}: {e}")
         result["error"] = f"Unexpected error: {str(e)}"
     finally:
         duration = time.time() - start_time
@@ -133,7 +162,6 @@ def call_agent_api(task: Dict[str, Any], user_id: str) -> Dict[str, Any]:
 
     return result
 
-# --- 主函数 ---
 def main():
     """主执行函数，加载数据，根据策略运行任务，并实时写入结果。"""
     logger.info("--- Starting GAIA Agent Runner ---")
@@ -199,11 +227,11 @@ def main():
     processed_count = 0
     success_count = 0
     error_count = 0
-    logger.info(f"Starting processing of {len(tasks_to_run)} tasks. Results will be written to {OUTPUT_FILE}")
+    logger.info(f"Starting processing of {len(tasks_to_run)} tasks using {MAX_WORKERS} worker(s). Results will be written to {OUTPUT_FILE}")
 
-    # 使用 'a' 模式打开文件以追加写入
     try:
         with open(OUTPUT_FILE, 'a', encoding='utf-8') as outfile, ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # 为每个任务分配一个唯一的 user_id，以模拟不同的用户（尽管这里是串行执行）
             futures = {executor.submit(call_agent_api, task, f"{USER_ID_PREFIX}_{task['task_id']}"): task['task_id'] for task in tasks_to_run}
 
             for future in as_completed(futures):
@@ -215,6 +243,10 @@ def main():
                     outfile.flush() # 确保立即写入磁盘
 
                     processed_count += 1
+                    # 修正 Final Answer 的大小写不一致问题
+                    ground_truth = next((t.get("Final Answer") or t.get("Final answer") for t in tasks_to_run if t["task_id"] == task_id), None)
+                    result["ground_truth"] = ground_truth # 确保结果中也包含 GT
+
                     if result.get("model_answer") is not None and result.get("error") is None:
                         success_count += 1
                     else:
@@ -222,13 +254,15 @@ def main():
 
                 except Exception as e:
                     logger.exception(f"Error retrieving result future for task {task_id}: {e}")
+                    # 修正 Final Answer 的大小写不一致问题
+                    ground_truth = next((t.get("Final Answer") or t.get("Final answer") for t in tasks_to_run if t["task_id"] == task_id), None)
                     error_result = {
                         "task_id": task_id,
                         "model_answer": None,
                         "reasoning_trace_summary": f"Future execution failed: {str(e)}",
                         "error": f"Future execution failed: {str(e)}",
                         "api_response_status": None,
-                        "ground_truth": next((t.get("Final Answer") for t in tasks_to_run if t["task_id"] == task_id), None)
+                        "ground_truth": ground_truth
                     }
                     outfile.write(json.dumps(error_result) + '\n')
                     outfile.flush()
@@ -256,5 +290,4 @@ def main():
     logger.info("---------------------")
 
 if __name__ == "__main__":
-    import uuid # 确保导入 uuid
     main()
